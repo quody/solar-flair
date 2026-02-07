@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@layer base {
+  :root {
+    --background: 220 20% 6%;
+    --foreground: 210 20% 92%;
+    --card: 220 18% 10%;
+    --card-foreground: 210 20% 92%;
+    --popover: 220 18% 10%;
+    --popover-foreground: 210 20% 92%;
+    --primary: 160 80% 50%;
+    --primary-foreground: 220 20% 6%;
+    --secondary: 220 15% 16%;
+    --secondary-foreground: 210 20% 85%;
+    --muted: 220 15% 14%;
+    --muted-foreground: 210 10% 55%;
+    --accent: 280 70% 60%;
+    --accent-foreground: 210 20% 95%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 220 15% 18%;
+    --input: 220 15% 18%;
+    --ring: 160 80% 50%;
+    --chart-1: 160 80% 50%;
+    --chart-2: 280 70% 60%;
+    --chart-3: 190 80% 55%;
+    --chart-4: 320 70% 60%;
+    --chart-5: 45 80% 55%;
+    --radius: 0.75rem;
+    --sidebar-background: 220 18% 8%;
+    --sidebar-foreground: 210 20% 85%;
+    --sidebar-primary: 160 80% 50%;
+    --sidebar-primary-foreground: 220 20% 6%;
+    --sidebar-accent: 220 15% 14%;
+    --sidebar-accent-foreground: 210 20% 85%;
+    --sidebar-border: 220 15% 18%;
+    --sidebar-ring: 160 80% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Leaflet overrides for dark theme */
+.leaflet-container {
+  background: hsl(220 20% 6%) !important;
+}
+.leaflet-control-zoom a {
+  background: hsl(220 18% 10%) !important;
+  color: hsl(210 20% 85%) !important;
+  border-color: hsl(220 15% 18%) !important;
+}
+.leaflet-control-zoom a:hover {
+  background: hsl(220 15% 16%) !important;
+}
+.leaflet-control-attribution {
+  background: hsl(220 18% 10% / 0.8) !important;
+  color: hsl(210 10% 55%) !important;
+  font-size: 10px !important;
+}
+.leaflet-control-attribution a {
+  color: hsl(160 80% 50%) !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(220 20% 6%);
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(220 15% 22%);
+  border-radius: 3px;
+}
+
+/* Pulse animation for live indicator */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px hsl(160 80% 50% / 0.5); }
+  50% { opacity: 0.6; box-shadow: 0 0 8px hsl(160 80% 50% / 0.8); }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Range slider thumb */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: hsl(160 80% 50%);
+  cursor: pointer;
+  border: 2px solid hsl(220 18% 10%);
+  box-shadow: 0 0 8px hsl(160 80% 50% / 0.4);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: hsl(160 80% 50%);
+  cursor: pointer;
+  border: 2px solid hsl(220 18% 10%);
+  box-shadow: 0 0 8px hsl(160 80% 50% / 0.4);
+}
