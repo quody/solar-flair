@@ -49,9 +49,11 @@ export interface Verdict {
   darkUntil?: string;
 }
 
-export interface ViewportCloudGrid {
-  points: { lat: number; lon: number; hours: number[] }[];
-  fetchedAt: number;
+export interface CloudHourlyGrid {
+  gridLats: number[];
+  gridLons: number[];
+  times: string[];
+  lookup: Record<string, number[]>;
 }
 
 /* ---------- API Fetchers ---------- */
@@ -124,26 +126,49 @@ export async function fetchCloudCover(
   };
 }
 
-export async function fetchViewportClouds(
-  points: { lat: number; lon: number }[]
-): Promise<ViewportCloudGrid> {
+export async function fetchCloudHourlyGrid(
+  gridLats: number[],
+  gridLons: number[]
+): Promise<CloudHourlyGrid> {
+  const rLats = gridLats.map((v) => Math.round(v * 100) / 100);
+  const rLons = gridLons.map((v) => Math.round(v * 100) / 100);
+
+  const points: { lat: number; lon: number }[] = [];
+  for (const lat of rLats) {
+    for (const lon of rLons) {
+      points.push({ lat, lon });
+    }
+  }
   const capped = points.slice(0, 50);
   const lats = capped.map((p) => p.lat).join(",");
   const lons = capped.map((p) => p.lon).join(",");
-  const res = await fetch(
-    `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&hourly=cloud_cover&forecast_days=2`
+
+  let res = await fetch(
+    `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&hourly=cloud_cover&forecast_days=2&timezone=auto`
   );
-  if (!res.ok) throw new Error("Failed to fetch viewport clouds");
+
+  // Retry on 429 with exponential backoff (max 2 retries)
+  for (let attempt = 0; !res.ok && res.status === 429 && attempt < 2; attempt++) {
+    await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
+    res = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&hourly=cloud_cover&forecast_days=2&timezone=auto`
+    );
+  }
+
+  if (!res.ok) throw new Error("Failed to fetch cloud grid");
   const data = await res.json();
-  const results = Array.isArray(data) ? data : [data];
-  return {
-    points: results.map((r: { hourly: { time: string[]; cloud_cover: number[] } }, i: number) => ({
-      lat: capped[i].lat,
-      lon: capped[i].lon,
-      hours: r.hourly.cloud_cover,
-    })),
-    fetchedAt: Date.now(),
-  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const results: any[] = Array.isArray(data) ? data : [data];
+
+  const lookup: Record<string, number[]> = {};
+  for (let i = 0; i < capped.length; i++) {
+    const key = `${capped[i].lat.toFixed(2)},${capped[i].lon.toFixed(2)}`;
+    lookup[key] = results[i]?.hourly?.cloud_cover ?? [];
+  }
+
+  const times: string[] = results[0]?.hourly?.time ?? [];
+
+  return { gridLats: rLats, gridLons: rLons, times, lookup };
 }
 
 export async function fetchSunTimes(
@@ -160,20 +185,38 @@ export async function fetchSunTimes(
 
 /* ---------- Aurora Grid Helpers ---------- */
 
+// Spatial index for O(1) aurora point lookups (keyed by "lat,lon" on integer grid)
+let _ovalIndex: Map<string, number> | null = null;
+let _ovalIndexSource: AuroraPoint[] | null = null;
+
+function getOvalIndex(oval: AuroraPoint[]): Map<string, number> {
+  if (_ovalIndexSource === oval && _ovalIndex) return _ovalIndex;
+  const idx = new Map<string, number>();
+  for (const p of oval) {
+    const key = `${Math.round(p.lat)},${Math.round(p.lon)}`;
+    const existing = idx.get(key);
+    if (existing === undefined || p.probability > existing) {
+      idx.set(key, p.probability);
+    }
+  }
+  _ovalIndex = idx;
+  _ovalIndexSource = oval;
+  return idx;
+}
+
 export function sampleAuroraAt(
   oval: AuroraPoint[],
   lat: number,
   lon: number
 ): number {
+  const idx = getOvalIndex(oval);
   // Bilinear interpolation from 1° grid
   const gridLat = Math.floor(lat);
   const gridLon = Math.floor(lon);
   const fracLat = lat - gridLat;
   const fracLon = lon - gridLon;
 
-  const get = (la: number, lo: number) =>
-    oval.find((p) => Math.abs(p.lat - la) < 0.5 && Math.abs(p.lon - lo) < 0.5)
-      ?.probability ?? 0;
+  const get = (la: number, lo: number) => idx.get(`${la},${lo}`) ?? 0;
 
   const v00 = get(gridLat, gridLon);
   const v10 = get(gridLat + 1, gridLon);

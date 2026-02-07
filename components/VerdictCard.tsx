@@ -61,7 +61,7 @@ export function VerdictCard({ verdict, loading }: VerdictCardProps) {
 
   return (
     <div
-      className={`rounded-lg border ${config.border} ${config.bg} ${config.glow} p-4 transition-all`}
+      className={`rounded-lg border ${config.border} ${config.bg} ${config.glow} p-4 transition-all h-full`}
     >
       <div className="flex items-center gap-2 mb-2">
         {config.icon}

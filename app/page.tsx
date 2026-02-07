@@ -2,7 +2,7 @@
 
 import { useAuroraData } from "@/hooks/useAuroraData";
 import { VerdictCard } from "@/components/VerdictCard";
-import { StatCards } from "@/components/StatCards";
+import { KpCard, BzCard, CloudCard } from "@/components/StatCards";
 import { KpForecastChart } from "@/components/KpForecastChart";
 import { CloudChart } from "@/components/CloudChart";
 import { AuroraMap } from "@/components/AuroraMap";
@@ -23,6 +23,7 @@ export default function Page() {
     demoMode,
     demoDateLabel,
     toggleDemo,
+    updateLocation,
   } = useAuroraData();
 
   return (
@@ -119,36 +120,26 @@ export default function Page() {
           kp={kp?.kp ?? 0}
           kpForecast={kpForecast}
           userLocation={userLocation}
+          onLocationChange={updateLocation}
         />
       </div>
 
       {/* Info Boxes Below Map */}
-      <div className="max-w-[1600px] mx-auto px-4 py-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Verdict */}
-          <div className="lg:col-span-1">
+      <div className="max-w-[1600px] mx-auto px-4 py-4 space-y-4">
+        {/* Row 1: Verdict + stats */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="lg:col-span-2">
             <VerdictCard verdict={verdict} loading={loading} />
           </div>
+          <KpCard kp={kp} loading={loading} />
+          <BzCard bz={bz} loading={loading} />
+          <CloudCard cloudCover={cloudCover} loading={loading} />
+        </div>
 
-          {/* Stat Cards */}
-          <div className="lg:col-span-1">
-            <StatCards
-              kp={kp}
-              bz={bz}
-              cloudCover={cloudCover}
-              loading={loading}
-            />
-          </div>
-
-          {/* Kp Forecast Chart */}
-          <div className="lg:col-span-1">
-            <KpForecastChart forecast={kpForecast} loading={loading} />
-          </div>
-
-          {/* Cloud Cover Chart */}
-          <div className="lg:col-span-1">
-            <CloudChart cloudCover={cloudCover} loading={loading} />
-          </div>
+        {/* Row 2: Charts */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <KpForecastChart forecast={kpForecast} loading={loading} />
+          <CloudChart cloudCover={cloudCover} loading={loading} />
         </div>
 
         {/* Data Source Info */}

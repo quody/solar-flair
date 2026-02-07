@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import type {
   AuroraPoint,
   KpForecastEntry,
-  ViewportCloudGrid,
+  CloudHourlyGrid,
 } from "@/lib/api";
 import {
   sampleAuroraAt,
@@ -13,7 +13,7 @@ import {
   getMinAuroraLat,
   darknessFactor,
   auroraColor,
-  fetchViewportClouds,
+  fetchCloudHourlyGrid,
   destinationPoint,
 } from "@/lib/api";
 import { sampleLpSync, prefetchTilesForBounds, sampleLpAsync, bortleLabel } from "@/lib/lpTiles";
@@ -26,6 +26,8 @@ import {
   MapPin,
   Navigation,
   Clock,
+  ExternalLink,
+  Crosshair,
 } from "lucide-react";
 
 // ---- Types ----
@@ -36,6 +38,7 @@ interface AuroraMapProps {
   kp: number;
   kpForecast: KpForecastEntry[];
   userLocation: { lat: number; lon: number } | null;
+  onLocationChange?: (lat: number, lon: number) => void;
 }
 
 interface SpotResult {
@@ -44,6 +47,34 @@ interface SpotResult {
   aurora: number;
   bortle: number;
   score: number;
+  distance: number; // km from user
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLon = (lon2 - lon1) * rad;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ---- Cloud hour index: find the closest matching hour in the times array ----
+function getCloudHourIdx(times: string[], hourOffset: number): number {
+  if (times.length === 0) return 0;
+  const target = Date.now() + hourOffset * 3600_000;
+  let bestIdx = 0;
+  let bestDiff = Infinity;
+  for (let i = 0; i < times.length; i++) {
+    const diff = Math.abs(new Date(times[i]).getTime() - target);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
 }
 
 // ---- Component ----
@@ -52,17 +83,20 @@ export function AuroraMap({
   kp,
   kpForecast,
   userLocation,
+  onLocationChange,
 }: AuroraMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
-  const cloudGridRef = useRef<ViewportCloudGrid | null>(null);
+  const cloudGridRef = useRef<CloudHourlyGrid | null>(null);
   const lastCloudFetchRef = useRef(0);
+  const cloudFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const spotLayerRef = useRef<any>(null);
   const drawTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null);
 
   const [viewMode, setViewMode] = useState<ViewMode>("aggregate");
   const [timeOffset, setTimeOffset] = useState(0); // hours from now
@@ -73,6 +107,47 @@ export function AuroraMap({
   const [spotDistance, setSpotDistance] = useState<number | null>(null);
   const [bestSpot, setBestSpot] = useState<SpotResult | null>(null);
   const [leafletLoaded, setLeafletLoaded] = useState(false);
+  const [locating, setLocating] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const userMarkerRef = useRef<any>(null);
+
+  const handleLocateMe = useCallback(() => {
+    if (!navigator?.geolocation) return;
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude: lat, longitude: lon } = pos.coords;
+        // Update marker on map
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const L = (window as any).L;
+        const map = mapRef.current;
+        if (map && L) {
+          if (userMarkerRef.current) {
+            userMarkerRef.current.setLatLng([lat, lon]);
+          } else {
+            const userIcon = L.divIcon({
+              className: "",
+              html: `<div style="width:12px;height:12px;background:hsl(160,80%,50%);border-radius:50%;border:2px solid hsl(220,18%,10%);box-shadow:0 0 10px hsl(160,80%,50%,0.5);"></div>`,
+              iconSize: [12, 12],
+              iconAnchor: [6, 6],
+            });
+            userMarkerRef.current = L.marker([lat, lon], { icon: userIcon })
+              .addTo(map)
+              .bindTooltip("Your location", {
+                permanent: false,
+                direction: "top",
+                offset: [0, -8],
+              });
+          }
+          map.flyTo([lat, lon], Math.max(map.getZoom(), 6), { duration: 1.5 });
+        }
+        onLocationChange?.(lat, lon);
+        setLocating(false);
+      },
+      () => setLocating(false),
+      { timeout: 10000 }
+    );
+  }, [onLocationChange]);
 
   // Load Leaflet dynamically (client-only)
   useEffect(() => {
@@ -109,7 +184,7 @@ export function AuroraMap({
     const map = L.map(mapContainerRef.current, {
       center: userLocation
         ? [userLocation.lat, userLocation.lon]
-        : [66.5039, 25.7294],
+        : [60.17, 24.94],
       zoom: 4,
       minZoom: 3,
       maxZoom: 12,
@@ -135,9 +210,7 @@ export function AuroraMap({
     canvas.style.pointerEvents = "none";
     canvas.style.mixBlendMode = "screen";
     canvas.style.zIndex = "400";
-    map.getContainer()
-      .querySelector(".leaflet-map-pane")
-      ?.appendChild(canvas);
+    map.getContainer().appendChild(canvas);
     canvasRef.current = canvas;
 
     // Create tooltip div
@@ -164,7 +237,7 @@ export function AuroraMap({
         iconSize: [12, 12],
         iconAnchor: [6, 6],
       });
-      L.marker([userLocation.lat, userLocation.lon], { icon: userIcon })
+      userMarkerRef.current = L.marker([userLocation.lat, userLocation.lon], { icon: userIcon })
         .addTo(map)
         .bindTooltip("Your location", {
           permanent: false,
@@ -182,57 +255,81 @@ export function AuroraMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leafletLoaded]);
 
-  // Cloud grid fetcher
+  // Cloud grid fetcher — builds a structured 7×7 grid for bilinear interpolation
   const fetchCloudGrid = useCallback(async () => {
     if (!mapRef.current) return;
     const now = Date.now();
-    if (now - lastCloudFetchRef.current < 30000) return;
+    if (now - lastCloudFetchRef.current < 30_000) return;
     lastCloudFetchRef.current = now;
 
     const bounds = mapRef.current.getBounds();
-    const south = bounds.getSouth();
-    const north = bounds.getNorth();
-    const west = bounds.getWest();
-    const east = bounds.getEast();
+    const south = Math.max(-90, bounds.getSouth());
+    const north = Math.min(90, bounds.getNorth());
+    const west = Math.max(-180, bounds.getWest());
+    const east = Math.min(180, bounds.getEast());
 
-    const points: { lat: number; lon: number }[] = [];
-    const latStep = (north - south) / 5;
-    const lonStep = (east - west) / 5;
-    for (let i = 0; i <= 5; i++) {
-      for (let j = 0; j <= 5; j++) {
-        points.push({
-          lat: south + latStep * i,
-          lon: west + lonStep * j,
-        });
-      }
+    const GRID_DIVISIONS = 6;
+    const latStep = (north - south) / GRID_DIVISIONS;
+    const lonStep = (east - west) / GRID_DIVISIONS;
+
+    const gridLats: number[] = [];
+    const gridLons: number[] = [];
+    for (let i = 0; i <= GRID_DIVISIONS; i++) {
+      gridLats.push(Math.round((south + latStep * i) * 100) / 100);
+      gridLons.push(Math.round((west + lonStep * i) * 100) / 100);
     }
 
     try {
-      const grid = await fetchViewportClouds(points);
+      const grid = await fetchCloudHourlyGrid(gridLats, gridLons);
       cloudGridRef.current = grid;
     } catch {
       // Silently fail for cloud grid
     }
   }, []);
 
-  // Sample cloud at a point using bilinear interpolation
+  // Sample cloud at a point using bilinear interpolation over the structured grid
   const sampleCloudAt = useCallback(
     (lat: number, lon: number, hourIdx: number): number => {
       const grid = cloudGridRef.current;
-      if (!grid || grid.points.length === 0) return 50;
+      if (!grid || grid.gridLats.length < 2 || grid.gridLons.length < 2) return 50;
 
-      // Find nearest 4 points for bilinear interpolation
-      let minDist = Infinity;
-      let nearest = grid.points[0];
-      for (const p of grid.points) {
-        const d = (p.lat - lat) ** 2 + (p.lon - lon) ** 2;
-        if (d < minDist) {
-          minDist = d;
-          nearest = p;
-        }
+      const { gridLats, gridLons, lookup } = grid;
+
+      // Clamp to grid extents
+      const cLat = Math.max(gridLats[0], Math.min(gridLats[gridLats.length - 1], lat));
+      const cLon = Math.max(gridLons[0], Math.min(gridLons[gridLons.length - 1], lon));
+
+      // Find bounding cell indices
+      let li = gridLats.length - 2;
+      for (let i = 0; i < gridLats.length - 1; i++) {
+        if (gridLats[i + 1] >= cLat) { li = i; break; }
       }
-      const idx = Math.min(hourIdx, nearest.hours.length - 1);
-      return nearest.hours[Math.max(0, idx)] ?? 50;
+      let lj = gridLons.length - 2;
+      for (let i = 0; i < gridLons.length - 1; i++) {
+        if (gridLons[i + 1] >= cLon) { lj = i; break; }
+      }
+
+      const latLow = gridLats[li];
+      const latHigh = gridLats[li + 1];
+      const lonLow = gridLons[lj];
+      const lonHigh = gridLons[lj + 1];
+
+      const tLat = latHigh !== latLow ? (cLat - latLow) / (latHigh - latLow) : 0;
+      const tLon = lonHigh !== lonLow ? (cLon - lonLow) / (lonHigh - lonLow) : 0;
+
+      const Q = (la: number, lo: number): number => {
+        const key = `${la.toFixed(2)},${lo.toFixed(2)}`;
+        const hours = lookup[key];
+        if (!hours) return 50;
+        return hours[Math.max(0, Math.min(hourIdx, hours.length - 1))] ?? 50;
+      };
+
+      return (
+        Q(latLow, lonLow) * (1 - tLat) * (1 - tLon) +
+        Q(latHigh, lonLow) * tLat * (1 - tLon) +
+        Q(latLow, lonHigh) * (1 - tLat) * tLon +
+        Q(latHigh, lonHigh) * tLat * tLon
+      );
     },
     []
   );
@@ -252,8 +349,12 @@ export function AuroraMap({
     canvas.style.width = `${size.x}px`;
     canvas.style.height = `${size.y}px`;
 
-    // Offscreen canvas at 25% resolution
-    const offscreen = document.createElement("canvas");
+    // Offscreen canvas at 25% resolution (reused across frames)
+    let offscreen = offscreenRef.current;
+    if (!offscreen) {
+      offscreen = document.createElement("canvas");
+      offscreenRef.current = offscreen;
+    }
     offscreen.width = w;
     offscreen.height = h;
     const offCtx = offscreen.getContext("2d");
@@ -266,7 +367,9 @@ export function AuroraMap({
     const forecastKp = getKpAtTime(kpForecast, kp, targetTime);
     const kpScale = timeOffset > 0 ? getKpScale(kp, forecastKp) : 1;
     const minLat = getMinAuroraLat(forecastKp);
-    const hourIdx = timeOffset;
+    const cloudHourIdx = cloudGridRef.current?.times
+      ? getCloudHourIdx(cloudGridRef.current.times, timeOffset)
+      : timeOffset;
 
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
@@ -294,7 +397,7 @@ export function AuroraMap({
 
           if (viewMode === "aggregate") {
             const clearSky = layerToggles.clouds
-              ? 1 - sampleCloudAt(lat, lon, hourIdx) / 100
+              ? 1 - sampleCloudAt(lat, lon, cloudHourIdx) / 100
               : 1;
             const dark = darknessFactor(lat, lon, targetTime);
             const lp = layerToggles.lightPollution
@@ -314,27 +417,28 @@ export function AuroraMap({
             pixels[idx + 3] = a;
           }
         } else if (viewMode === "clouds") {
-          const cloud = sampleCloudAt(lat, lon, hourIdx);
+          const cloud = sampleCloudAt(lat, lon, cloudHourIdx);
+          if (cloud < 5) continue; // effectively clear — skip
           const t = cloud / 100;
-          // Cyan/green → warm white → amber
+          // Cyan-green → warm white → amber
           let r: number, g: number, b: number;
           if (t < 0.3) {
             const f = t / 0.3;
-            r = Math.round(50 + f * 150);
-            g = Math.round(200 - f * 20);
-            b = Math.round(180 - f * 100);
-          } else if (t < 0.7) {
-            const f = (t - 0.3) / 0.4;
-            r = Math.round(200 + f * 55);
-            g = Math.round(180 + f * 30);
-            b = Math.round(80 + f * 80);
+            r = Math.round(40 + f * 60);    // 40 → 100
+            g = Math.round(180 + f * 40);   // 180 → 220
+            b = Math.round(140 + f * 60);   // 140 → 200
+          } else if (t < 0.6) {
+            const f = (t - 0.3) / 0.3;
+            r = Math.round(100 + f * 100);  // 100 → 200
+            g = Math.round(220 - f * 40);   // 220 → 180
+            b = Math.round(200 - f * 100);  // 200 → 100
           } else {
-            const f = (t - 0.7) / 0.3;
-            r = 255;
-            g = Math.round(210 - f * 50);
-            b = Math.round(160 - f * 100);
+            const f = (t - 0.6) / 0.4;
+            r = Math.round(200 + f * 40);   // 200 → 240
+            g = Math.round(180 - f * 40);   // 180 → 140
+            b = Math.round(100 - f * 40);   // 100 → 60
           }
-          const alpha = Math.round(t * 180);
+          const alpha = Math.round((0.1 + t * 0.55) * 255);
           pixels[idx] = r;
           pixels[idx + 1] = g;
           pixels[idx + 2] = b;
@@ -406,26 +510,34 @@ export function AuroraMap({
     if (!ctx) return;
     ctx.clearRect(0, 0, size.x, size.y);
 
-    // Glow pass
-    ctx.save();
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    const blurSize =
-      viewMode === "aggregate" || viewMode === "aurora" ? 8 : 4;
-    ctx.filter = `blur(${blurSize}px)`;
-    ctx.globalAlpha =
-      viewMode === "aggregate" || viewMode === "aurora" ? 0.6 : 0.5;
-    ctx.drawImage(offscreen, 0, 0, size.x, size.y);
-    ctx.restore();
 
-    // Sharp pass on top
-    ctx.save();
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-    ctx.globalAlpha =
-      viewMode === "aggregate" || viewMode === "aurora" ? 0.5 : 0.6;
-    ctx.drawImage(offscreen, 0, 0, size.x, size.y);
-    ctx.restore();
+    if (viewMode === "clouds") {
+      // Clouds: sharp upscale first, then soft blur glow on top
+      ctx.drawImage(offscreen, 0, 0, size.x, size.y);
+      ctx.save();
+      ctx.filter = "blur(4px)";
+      ctx.globalAlpha = 0.4;
+      ctx.drawImage(canvas, 0, 0);
+      ctx.restore();
+    } else {
+      // Aurora / aggregate / other: glow pass then sharp pass
+      ctx.save();
+      const blurSize =
+        viewMode === "aggregate" || viewMode === "aurora" ? 8 : 4;
+      ctx.filter = `blur(${blurSize}px)`;
+      ctx.globalAlpha =
+        viewMode === "aggregate" || viewMode === "aurora" ? 0.6 : 0.5;
+      ctx.drawImage(offscreen, 0, 0, size.x, size.y);
+      ctx.restore();
+
+      ctx.save();
+      ctx.globalAlpha =
+        viewMode === "aggregate" || viewMode === "aurora" ? 0.5 : 0.6;
+      ctx.drawImage(offscreen, 0, 0, size.x, size.y);
+      ctx.restore();
+    }
   }, [
     oval,
     kp,
@@ -442,10 +554,10 @@ export function AuroraMap({
     if (!map || !leafletLoaded) return;
 
     const handleDraw = () => {
+      // Quick redraw with existing data (100ms debounce)
       if (drawTimeoutRef.current) clearTimeout(drawTimeoutRef.current);
       drawTimeoutRef.current = setTimeout(() => {
         drawOverlay();
-        fetchCloudGrid();
         // Prefetch LP tiles
         const bounds = map.getBounds();
         prefetchTilesForBounds(
@@ -455,6 +567,13 @@ export function AuroraMap({
           bounds.getEast()
         );
       }, 100);
+
+      // Cloud fetch with longer debounce (1500ms) to avoid excessive requests
+      if (cloudFetchTimeoutRef.current) clearTimeout(cloudFetchTimeoutRef.current);
+      cloudFetchTimeoutRef.current = setTimeout(async () => {
+        await fetchCloudGrid();
+        drawOverlay(); // Redraw with fresh cloud data
+      }, 1500);
     };
 
     map.on("moveend", handleDraw);
@@ -468,6 +587,7 @@ export function AuroraMap({
       map.off("moveend", handleDraw);
       map.off("zoomend", handleDraw);
       map.off("resize", handleDraw);
+      if (cloudFetchTimeoutRef.current) clearTimeout(cloudFetchTimeoutRef.current);
     };
   }, [leafletLoaded, drawOverlay, fetchCloudGrid]);
 
@@ -503,11 +623,13 @@ export function AuroraMap({
       const targetTime = new Date(Date.now() + timeOffset * 3600_000);
       const forecastKp = getKpAtTime(kpForecast, kp, targetTime);
       const kpScale = timeOffset > 0 ? getKpScale(kp, forecastKp) : 1;
-      const hourIdx = timeOffset;
+      const cloudHourIdx = cloudGridRef.current?.times
+        ? getCloudHourIdx(cloudGridRef.current.times, timeOffset)
+        : timeOffset;
 
       let prob = sampleAuroraAt(oval, lat, lon);
       prob = Math.min(100, prob * kpScale);
-      const cloud = sampleCloudAt(lat, lon, hourIdx);
+      const cloud = sampleCloudAt(lat, lon, cloudHourIdx);
       const dark = darknessFactor(lat, lon, targetTime);
       const lp = sampleLpSync(lat, lon);
       const clearSky = 1 - cloud / 100;
@@ -623,6 +745,7 @@ export function AuroraMap({
             aurora,
             bortle: lpData.bortle,
             score,
+            distance: haversineKm(userLocation.lat, userLocation.lon, c.lat, c.lon),
           };
         }
       }
@@ -719,66 +842,120 @@ export function AuroraMap({
   const forecastKp = getKpAtTime(kpForecast, kp, targetTime);
 
   return (
-    <div className="relative rounded-lg border border-border overflow-hidden bg-card">
-      {/* Map Container */}
-      <div ref={mapContainerRef} className="w-full h-[500px] md:h-[600px]" />
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      {/* Map + overlays */}
+      <div className="relative">
+        <div ref={mapContainerRef} className="w-full h-[500px] md:h-[600px]" />
 
-      {/* View Mode Selector */}
-      <div className="absolute top-3 left-3 z-[500] flex gap-1 rounded-lg bg-card/90 backdrop-blur-sm border border-border p-1">
-        {viewModes.map((mode) => (
-          <button
-            key={mode.id}
-            onClick={() => setViewMode(mode.id)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-              viewMode === mode.id
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-            }`}
-          >
-            {mode.icon}
-            <span className="hidden sm:inline">{mode.label}</span>
-          </button>
-        ))}
+        {/* View Mode Selector */}
+        <div className="absolute top-3 left-12 z-[500] flex gap-1 rounded-lg bg-card/90 backdrop-blur-sm border border-border p-1">
+          {viewModes.map((mode) => (
+            <button
+              key={mode.id}
+              onClick={() => setViewMode(mode.id)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+                viewMode === mode.id
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+              }`}
+            >
+              {mode.icon}
+              <span className="hidden sm:inline">{mode.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Layer Toggles (aggregate mode) */}
+        {viewMode === "aggregate" && (
+          <div className="absolute top-3 right-3 z-[500] flex gap-2">
+            <button
+              onClick={() =>
+                setLayerToggles((p) => ({ ...p, clouds: !p.clouds }))
+              }
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all ${
+                layerToggles.clouds
+                  ? "bg-card/90 border-primary/30 text-primary backdrop-blur-sm"
+                  : "bg-card/60 border-border text-muted-foreground backdrop-blur-sm"
+              }`}
+            >
+              <Cloud className="h-3 w-3" />
+              <span className="hidden sm:inline">Clouds</span>
+            </button>
+            <button
+              onClick={() =>
+                setLayerToggles((p) => ({
+                  ...p,
+                  lightPollution: !p.lightPollution,
+                }))
+              }
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all ${
+                layerToggles.lightPollution
+                  ? "bg-card/90 border-primary/30 text-primary backdrop-blur-sm"
+                  : "bg-card/60 border-border text-muted-foreground backdrop-blur-sm"
+              }`}
+            >
+              <Lightbulb className="h-3 w-3" />
+              <span className="hidden sm:inline">Light Poll.</span>
+            </button>
+          </div>
+        )}
+
+        {/* Locate Me Button (desktop) */}
+        <button
+          onClick={handleLocateMe}
+          disabled={locating}
+          className="hidden md:flex absolute top-14 right-3 z-[500] items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium bg-card/90 backdrop-blur-sm border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all"
+        >
+          <Crosshair className={`h-3.5 w-3.5 ${locating ? "animate-pulse" : ""}`} />
+          <span>{locating ? "Locating..." : "My Location"}</span>
+        </button>
+
+        {/* Best Spot Info (stays on map) */}
+        {bestSpot && (
+          <div className="absolute bottom-3 right-3 z-[500] rounded-lg bg-card/90 backdrop-blur-sm border border-primary/20 p-3 max-w-[220px]">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <MapPin className="h-3.5 w-3.5 text-primary" />
+              <span className="text-xs font-medium text-foreground">
+                Best Spot
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Aurora: {bestSpot.aurora.toFixed(1)}%
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {bortleLabel(bestSpot.bortle)} (Bortle {bestSpot.bortle})
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              {bestSpot.lat.toFixed(2)}, {bestSpot.lon.toFixed(2)}
+            </p>
+            {bestSpot.distance < 0.5 ? (
+              <p className="text-[11px] text-primary mt-2">
+                You&apos;re already at the best spot!
+              </p>
+            ) : (
+              <button
+                onClick={() => {
+                  if (!userLocation) return;
+                  window.open(
+                    `https://www.google.com/maps/dir/${userLocation.lat},${userLocation.lon}/${bestSpot.lat},${bestSpot.lon}`,
+                    "_blank"
+                  );
+                }}
+                className="mt-2 w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
+              >
+                <Navigation className="h-3 w-3" />
+                Navigate ({bestSpot.distance < 1 ? `${Math.round(bestSpot.distance * 1000)} m` : `${Math.round(bestSpot.distance)} km`})
+                <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Layer Toggles (aggregate mode) */}
-      {viewMode === "aggregate" && (
-        <div className="absolute top-3 right-3 z-[500] flex gap-2">
-          <button
-            onClick={() =>
-              setLayerToggles((p) => ({ ...p, clouds: !p.clouds }))
-            }
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all ${
-              layerToggles.clouds
-                ? "bg-card/90 border-primary/30 text-primary backdrop-blur-sm"
-                : "bg-card/60 border-border text-muted-foreground backdrop-blur-sm"
-            }`}
-          >
-            <Cloud className="h-3 w-3" />
-            <span className="hidden sm:inline">Clouds</span>
-          </button>
-          <button
-            onClick={() =>
-              setLayerToggles((p) => ({
-                ...p,
-                lightPollution: !p.lightPollution,
-              }))
-            }
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all ${
-              layerToggles.lightPollution
-                ? "bg-card/90 border-primary/30 text-primary backdrop-blur-sm"
-                : "bg-card/60 border-border text-muted-foreground backdrop-blur-sm"
-            }`}
-          >
-            <Lightbulb className="h-3 w-3" />
-            <span className="hidden sm:inline">Light Poll.</span>
-          </button>
-        </div>
-      )}
-
-      {/* Time Selector */}
-      <div className="absolute bottom-14 left-3 right-3 z-[500]">
-        <div className="rounded-lg bg-card/90 backdrop-blur-sm border border-border p-3">
+      {/* Controls below map */}
+      <div className="border-t border-border p-3 space-y-3">
+        {/* Time Selector */}
+        <div className="max-w-lg mx-auto">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5">
               <Clock className="h-3.5 w-3.5 text-muted-foreground" />
@@ -808,55 +985,62 @@ export function AuroraMap({
             }}
           />
         </div>
-      </div>
 
-      {/* Spot Finder */}
-      <div className="absolute bottom-3 left-3 z-[500] flex items-center gap-2">
-        <div className="flex items-center gap-1 rounded-lg bg-card/90 backdrop-blur-sm border border-border p-1">
-          <div className="flex items-center gap-1 px-2 text-muted-foreground">
-            <Navigation className="h-3 w-3" />
-            <span className="text-xs hidden sm:inline">Spot Finder</span>
+        {/* Spot Finder */}
+        <div className="max-w-lg mx-auto">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
+              <Navigation className="h-3.5 w-3.5 text-primary" />
+              <span className="text-xs font-medium text-foreground">Spot Finder</span>
+            </div>
+            {spotDistance !== null && (
+              <span className="text-xs font-mono text-primary font-semibold">
+                {spotDistance} km
+              </span>
+            )}
           </div>
-          {distancePresets.map((preset) => (
-            <button
-              key={preset.value}
-              onClick={() =>
-                setSpotDistance(
-                  spotDistance === preset.value ? null : preset.value
-                )
-              }
-              className={`px-2 py-1 rounded-md text-xs font-medium transition-all ${
-                spotDistance === preset.value
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-              }`}
-            >
-              {preset.label}
-            </button>
-          ))}
+          <div className="flex gap-1 mb-2.5">
+            {distancePresets.map((preset) => (
+              <button
+                key={preset.value}
+                onClick={() =>
+                  setSpotDistance(
+                    spotDistance === preset.value ? null : preset.value
+                  )
+                }
+                className={`flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-all ${
+                  spotDistance === preset.value
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={300}
+            step={1}
+            value={spotDistance !== null ? Math.round(Math.log10(Math.max(1, spotDistance)) * 100) : 0}
+            onChange={(e) => {
+              const km = Math.round(10 ** (parseInt(e.target.value) / 100));
+              setSpotDistance(Math.max(1, Math.min(1000, km)));
+            }}
+            className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+            style={{
+              background: spotDistance !== null
+                ? `linear-gradient(to right, hsl(160,80%,50%) ${(Math.log10(Math.max(1, spotDistance)) / 3) * 100}%, hsl(220,15%,18%) ${(Math.log10(Math.max(1, spotDistance)) / 3) * 100}%)`
+                : "hsl(220,15%,18%)",
+            }}
+          />
+          <div className="flex justify-between mt-1">
+            <span className="text-[10px] text-muted-foreground">1 km</span>
+            <span className="text-[10px] text-muted-foreground">1000 km</span>
+          </div>
         </div>
       </div>
-
-      {/* Best Spot Info */}
-      {bestSpot && (
-        <div className="absolute bottom-3 right-3 z-[500] rounded-lg bg-card/90 backdrop-blur-sm border border-primary/20 p-3 max-w-[200px]">
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <MapPin className="h-3.5 w-3.5 text-primary" />
-            <span className="text-xs font-medium text-foreground">
-              Best Spot
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Aurora: {bestSpot.aurora.toFixed(1)}%
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {bortleLabel(bestSpot.bortle)} (Bortle {bestSpot.bortle})
-          </p>
-          <p className="text-[10px] text-muted-foreground mt-1">
-            {bestSpot.lat.toFixed(2)}, {bestSpot.lon.toFixed(2)}
-          </p>
-        </div>
-      )}
     </div>
   );
 }

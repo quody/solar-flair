@@ -36,6 +36,7 @@ export interface AuroraData {
   demoMode: boolean;
   demoDateLabel: string;
   toggleDemo: () => void;
+  updateLocation: (lat: number, lon: number) => void;
 }
 
 export function useAuroraData(): AuroraData {
@@ -59,11 +60,11 @@ export function useAuroraData(): AuroraData {
 
   // Get user location once — fallback to Rovaniemi, Finland if denied/unavailable
   useEffect(() => {
-    const ROVANIEMI = { lat: 66.5039, lon: 25.7294 };
+    const HELSINKI = { lat: 60.17, lon: 24.94 };
 
     if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setUserLocation(ROVANIEMI);
-      locationRef.current = ROVANIEMI;
+      setUserLocation(HELSINKI);
+      locationRef.current = HELSINKI;
       return;
     }
 
@@ -74,8 +75,8 @@ export function useAuroraData(): AuroraData {
         locationRef.current = loc;
       },
       () => {
-        setUserLocation(ROVANIEMI);
-        locationRef.current = ROVANIEMI;
+        setUserLocation(HELSINKI);
+        locationRef.current = HELSINKI;
       },
       { timeout: 10000 }
     );
@@ -158,6 +159,12 @@ export function useAuroraData(): AuroraData {
     });
   }, [loadDemo, fetchAll]);
 
+  const updateLocation = useCallback((lat: number, lon: number) => {
+    const loc = { lat, lon };
+    setUserLocation(loc);
+    locationRef.current = loc;
+  }, []);
+
   // Initial fetch + polling (live mode only)
   useEffect(() => {
     if (demoMode) return;
@@ -196,5 +203,6 @@ export function useAuroraData(): AuroraData {
     demoMode,
     demoDateLabel: DEMO_DATE_LABEL,
     toggleDemo,
+    updateLocation,
   };
 }
