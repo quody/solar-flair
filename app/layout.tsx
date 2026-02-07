@@ -11,9 +11,9 @@ const _jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SolarFlair - Aurora Borealis Tracker",
+  title: "SolarFlair | Real-Time Aurora Borealis Tracker",
   description:
-    "Real-time aurora borealis tracker with interactive map, forecasts, and best viewing spot finder.",
+    "Track the aurora borealis in real time with an interactive map, Kp index forecasts, solar wind data, and cloud cover analysis to find your best viewing spot.",
 };
 
 export const viewport: Viewport = {

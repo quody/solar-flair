@@ -6,7 +6,7 @@ import { KpCard, BzCard, CloudCard } from "@/components/StatCards";
 import { KpForecastChart } from "@/components/KpForecastChart";
 import { CloudChart } from "@/components/CloudChart";
 import { AuroraMap } from "@/components/AuroraMap";
-import { RefreshCw, MapPin, Radio, Play, X } from "lucide-react";
+import { Header } from "@/components/Header";
 
 export default function Page() {
   const {
@@ -29,80 +29,14 @@ export default function Page() {
   return (
     <main className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-[1600px] mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Radio className="h-4 w-4 text-primary" />
-              </div>
-              <div>
-                <h1 className="text-sm font-semibold text-foreground tracking-tight">
-                  SolarFlair
-                </h1>
-                <p className="text-[10px] text-muted-foreground leading-none">
-                  Aurora Tracker
-                </p>
-              </div>
-            </div>
-
-            {/* Demo Toggle */}
-            <button
-              onClick={toggleDemo}
-              className={`ml-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                demoMode
-                  ? "bg-accent text-accent-foreground border border-accent/50 shadow-[0_0_12px_rgba(168,85,247,0.2)]"
-                  : "bg-secondary text-secondary-foreground border border-border hover:bg-secondary/80"
-              }`}
-            >
-              {demoMode ? (
-                <>
-                  <X className="h-3 w-3" />
-                  <span>Exit Demo</span>
-                </>
-              ) : (
-                <>
-                  <Play className="h-3 w-3" />
-                  <span>Demo ({demoDateLabel})</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {demoMode && (
-              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 border border-accent/20">
-                <span className="text-[10px] font-mono text-accent">
-                  DEMO: {demoDateLabel}
-                </span>
-              </div>
-            )}
-            {userLocation && (
-              <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
-                <MapPin className="h-3 w-3" />
-                <span className="font-mono">
-                  {userLocation.lat.toFixed(2)}, {userLocation.lon.toFixed(2)}
-                </span>
-              </div>
-            )}
-            {lastUpdated && !demoMode && (
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <div className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse-glow" />
-                <span className="font-mono">
-                  {lastUpdated.toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                  })}
-                </span>
-              </div>
-            )}
-            {loading && !demoMode && (
-              <RefreshCw className="h-3.5 w-3.5 text-muted-foreground animate-spin" />
-            )}
-          </div>
-        </div>
-      </header>
+      <Header
+        loading={loading}
+        demoMode={demoMode}
+        demoDateLabel={demoDateLabel}
+        lastUpdated={lastUpdated}
+        userLocation={userLocation}
+        toggleDemo={toggleDemo}
+      />
 
       {/* Error Banner */}
       {error && !demoMode && (
