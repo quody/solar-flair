@@ -76,6 +76,27 @@
   color: hsl(160 80% 50%) !important;
 }
 
+/* Header glow effect */
+.header-glow {
+  position: relative;
+}
+.header-glow::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    hsl(160 80% 50% / 0.15) 20%,
+    hsl(160 80% 50% / 0.3) 50%,
+    hsl(280 70% 60% / 0.15) 80%,
+    transparent 100%
+  );
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
