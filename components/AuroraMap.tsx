@@ -789,7 +789,7 @@ export function AuroraMap({
       <div ref={mapContainerRef} className="w-full h-[500px] md:h-[600px]" />
 
       {/* View Mode Selector */}
-      <div className="absolute top-3 left-3 z-[500] flex gap-1 rounded-lg bg-card/90 backdrop-blur-sm border border-border p-1">
+      <div className="absolute top-3 left-12 z-[500] flex gap-1 rounded-lg bg-card/90 backdrop-blur-sm border border-border p-1">
         {viewModes.map((mode) => (
           <button
             key={mode.id}
