@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import type {
   AuroraPoint,
   KpForecastEntry,
-  ViewportCloudGrid,
+  CloudHourlyGrid,
 } from "@/lib/api";
 import {
   sampleAuroraAt,
@@ -13,7 +13,7 @@ import {
   getMinAuroraLat,
   darknessFactor,
   auroraColor,
-  fetchViewportClouds,
+  fetchCloudHourlyGrid,
   destinationPoint,
 } from "@/lib/api";
 import { sampleLpSync, prefetchTilesForBounds, sampleLpAsync, bortleLabel } from "@/lib/lpTiles";
@@ -46,6 +46,22 @@ interface SpotResult {
   score: number;
 }
 
+// ---- Cloud hour index: find the closest matching hour in the times array ----
+function getCloudHourIdx(times: string[], hourOffset: number): number {
+  if (times.length === 0) return 0;
+  const target = Date.now() + hourOffset * 3600_000;
+  let bestIdx = 0;
+  let bestDiff = Infinity;
+  for (let i = 0; i < times.length; i++) {
+    const diff = Math.abs(new Date(times[i]).getTime() - target);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
 // ---- Component ----
 export function AuroraMap({
   oval,
@@ -58,8 +74,9 @@ export function AuroraMap({
   const mapRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
-  const cloudGridRef = useRef<ViewportCloudGrid | null>(null);
+  const cloudGridRef = useRef<CloudHourlyGrid | null>(null);
   const lastCloudFetchRef = useRef(0);
+  const cloudFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const spotLayerRef = useRef<any>(null);
   const drawTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -181,57 +198,81 @@ export function AuroraMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leafletLoaded]);
 
-  // Cloud grid fetcher
+  // Cloud grid fetcher — builds a structured 7×7 grid for bilinear interpolation
   const fetchCloudGrid = useCallback(async () => {
     if (!mapRef.current) return;
     const now = Date.now();
-    if (now - lastCloudFetchRef.current < 30000) return;
+    if (now - lastCloudFetchRef.current < 30_000) return;
     lastCloudFetchRef.current = now;
 
     const bounds = mapRef.current.getBounds();
-    const south = bounds.getSouth();
-    const north = bounds.getNorth();
-    const west = bounds.getWest();
-    const east = bounds.getEast();
+    const south = Math.max(-90, bounds.getSouth());
+    const north = Math.min(90, bounds.getNorth());
+    const west = Math.max(-180, bounds.getWest());
+    const east = Math.min(180, bounds.getEast());
 
-    const points: { lat: number; lon: number }[] = [];
-    const latStep = (north - south) / 5;
-    const lonStep = (east - west) / 5;
-    for (let i = 0; i <= 5; i++) {
-      for (let j = 0; j <= 5; j++) {
-        points.push({
-          lat: south + latStep * i,
-          lon: west + lonStep * j,
-        });
-      }
+    const GRID_DIVISIONS = 6;
+    const latStep = (north - south) / GRID_DIVISIONS;
+    const lonStep = (east - west) / GRID_DIVISIONS;
+
+    const gridLats: number[] = [];
+    const gridLons: number[] = [];
+    for (let i = 0; i <= GRID_DIVISIONS; i++) {
+      gridLats.push(Math.round((south + latStep * i) * 100) / 100);
+      gridLons.push(Math.round((west + lonStep * i) * 100) / 100);
     }
 
     try {
-      const grid = await fetchViewportClouds(points);
+      const grid = await fetchCloudHourlyGrid(gridLats, gridLons);
       cloudGridRef.current = grid;
     } catch {
       // Silently fail for cloud grid
     }
   }, []);
 
-  // Sample cloud at a point using bilinear interpolation
+  // Sample cloud at a point using bilinear interpolation over the structured grid
   const sampleCloudAt = useCallback(
     (lat: number, lon: number, hourIdx: number): number => {
       const grid = cloudGridRef.current;
-      if (!grid || grid.points.length === 0) return 50;
+      if (!grid || grid.gridLats.length < 2 || grid.gridLons.length < 2) return 50;
 
-      // Find nearest 4 points for bilinear interpolation
-      let minDist = Infinity;
-      let nearest = grid.points[0];
-      for (const p of grid.points) {
-        const d = (p.lat - lat) ** 2 + (p.lon - lon) ** 2;
-        if (d < minDist) {
-          minDist = d;
-          nearest = p;
-        }
+      const { gridLats, gridLons, lookup } = grid;
+
+      // Clamp to grid extents
+      const cLat = Math.max(gridLats[0], Math.min(gridLats[gridLats.length - 1], lat));
+      const cLon = Math.max(gridLons[0], Math.min(gridLons[gridLons.length - 1], lon));
+
+      // Find bounding cell indices
+      let li = gridLats.length - 2;
+      for (let i = 0; i < gridLats.length - 1; i++) {
+        if (gridLats[i + 1] >= cLat) { li = i; break; }
       }
-      const idx = Math.min(hourIdx, nearest.hours.length - 1);
-      return nearest.hours[Math.max(0, idx)] ?? 50;
+      let lj = gridLons.length - 2;
+      for (let i = 0; i < gridLons.length - 1; i++) {
+        if (gridLons[i + 1] >= cLon) { lj = i; break; }
+      }
+
+      const latLow = gridLats[li];
+      const latHigh = gridLats[li + 1];
+      const lonLow = gridLons[lj];
+      const lonHigh = gridLons[lj + 1];
+
+      const tLat = latHigh !== latLow ? (cLat - latLow) / (latHigh - latLow) : 0;
+      const tLon = lonHigh !== lonLow ? (cLon - lonLow) / (lonHigh - lonLow) : 0;
+
+      const Q = (la: number, lo: number): number => {
+        const key = `${la.toFixed(2)},${lo.toFixed(2)}`;
+        const hours = lookup[key];
+        if (!hours) return 50;
+        return hours[Math.max(0, Math.min(hourIdx, hours.length - 1))] ?? 50;
+      };
+
+      return (
+        Q(latLow, lonLow) * (1 - tLat) * (1 - tLon) +
+        Q(latHigh, lonLow) * tLat * (1 - tLon) +
+        Q(latLow, lonHigh) * (1 - tLat) * tLon +
+        Q(latHigh, lonHigh) * tLat * tLon
+      );
     },
     []
   );
@@ -269,7 +310,9 @@ export function AuroraMap({
     const forecastKp = getKpAtTime(kpForecast, kp, targetTime);
     const kpScale = timeOffset > 0 ? getKpScale(kp, forecastKp) : 1;
     const minLat = getMinAuroraLat(forecastKp);
-    const hourIdx = timeOffset;
+    const cloudHourIdx = cloudGridRef.current?.times
+      ? getCloudHourIdx(cloudGridRef.current.times, timeOffset)
+      : timeOffset;
 
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
@@ -297,7 +340,7 @@ export function AuroraMap({
 
           if (viewMode === "aggregate") {
             const clearSky = layerToggles.clouds
-              ? 1 - sampleCloudAt(lat, lon, hourIdx) / 100
+              ? 1 - sampleCloudAt(lat, lon, cloudHourIdx) / 100
               : 1;
             const dark = darknessFactor(lat, lon, targetTime);
             const lp = layerToggles.lightPollution
@@ -317,27 +360,28 @@ export function AuroraMap({
             pixels[idx + 3] = a;
           }
         } else if (viewMode === "clouds") {
-          const cloud = sampleCloudAt(lat, lon, hourIdx);
+          const cloud = sampleCloudAt(lat, lon, cloudHourIdx);
+          if (cloud < 5) continue; // effectively clear — skip
           const t = cloud / 100;
-          // Cyan/green → warm white → amber
+          // Cyan-green → warm white → amber
           let r: number, g: number, b: number;
           if (t < 0.3) {
             const f = t / 0.3;
-            r = Math.round(50 + f * 150);
-            g = Math.round(200 - f * 20);
-            b = Math.round(180 - f * 100);
-          } else if (t < 0.7) {
-            const f = (t - 0.3) / 0.4;
-            r = Math.round(200 + f * 55);
-            g = Math.round(180 + f * 30);
-            b = Math.round(80 + f * 80);
+            r = Math.round(40 + f * 60);    // 40 → 100
+            g = Math.round(180 + f * 40);   // 180 → 220
+            b = Math.round(140 + f * 60);   // 140 → 200
+          } else if (t < 0.6) {
+            const f = (t - 0.3) / 0.3;
+            r = Math.round(100 + f * 100);  // 100 → 200
+            g = Math.round(220 - f * 40);   // 220 → 180
+            b = Math.round(200 - f * 100);  // 200 → 100
           } else {
-            const f = (t - 0.7) / 0.3;
-            r = 255;
-            g = Math.round(210 - f * 50);
-            b = Math.round(160 - f * 100);
+            const f = (t - 0.6) / 0.4;
+            r = Math.round(200 + f * 40);   // 200 → 240
+            g = Math.round(180 - f * 40);   // 180 → 140
+            b = Math.round(100 - f * 40);   // 100 → 60
           }
-          const alpha = Math.round(t * 180);
+          const alpha = Math.round((0.1 + t * 0.55) * 255);
           pixels[idx] = r;
           pixels[idx + 1] = g;
           pixels[idx + 2] = b;
@@ -409,26 +453,34 @@ export function AuroraMap({
     if (!ctx) return;
     ctx.clearRect(0, 0, size.x, size.y);
 
-    // Glow pass
-    ctx.save();
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    const blurSize =
-      viewMode === "aggregate" || viewMode === "aurora" ? 8 : 4;
-    ctx.filter = `blur(${blurSize}px)`;
-    ctx.globalAlpha =
-      viewMode === "aggregate" || viewMode === "aurora" ? 0.6 : 0.5;
-    ctx.drawImage(offscreen, 0, 0, size.x, size.y);
-    ctx.restore();
 
-    // Sharp pass on top
-    ctx.save();
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-    ctx.globalAlpha =
-      viewMode === "aggregate" || viewMode === "aurora" ? 0.5 : 0.6;
-    ctx.drawImage(offscreen, 0, 0, size.x, size.y);
-    ctx.restore();
+    if (viewMode === "clouds") {
+      // Clouds: sharp upscale first, then soft blur glow on top
+      ctx.drawImage(offscreen, 0, 0, size.x, size.y);
+      ctx.save();
+      ctx.filter = "blur(4px)";
+      ctx.globalAlpha = 0.4;
+      ctx.drawImage(canvas, 0, 0);
+      ctx.restore();
+    } else {
+      // Aurora / aggregate / other: glow pass then sharp pass
+      ctx.save();
+      const blurSize =
+        viewMode === "aggregate" || viewMode === "aurora" ? 8 : 4;
+      ctx.filter = `blur(${blurSize}px)`;
+      ctx.globalAlpha =
+        viewMode === "aggregate" || viewMode === "aurora" ? 0.6 : 0.5;
+      ctx.drawImage(offscreen, 0, 0, size.x, size.y);
+      ctx.restore();
+
+      ctx.save();
+      ctx.globalAlpha =
+        viewMode === "aggregate" || viewMode === "aurora" ? 0.5 : 0.6;
+      ctx.drawImage(offscreen, 0, 0, size.x, size.y);
+      ctx.restore();
+    }
   }, [
     oval,
     kp,
@@ -445,10 +497,10 @@ export function AuroraMap({
     if (!map || !leafletLoaded) return;
 
     const handleDraw = () => {
+      // Quick redraw with existing data (100ms debounce)
       if (drawTimeoutRef.current) clearTimeout(drawTimeoutRef.current);
       drawTimeoutRef.current = setTimeout(() => {
         drawOverlay();
-        fetchCloudGrid();
         // Prefetch LP tiles
         const bounds = map.getBounds();
         prefetchTilesForBounds(
@@ -458,6 +510,13 @@ export function AuroraMap({
           bounds.getEast()
         );
       }, 100);
+
+      // Cloud fetch with longer debounce (1500ms) to avoid excessive requests
+      if (cloudFetchTimeoutRef.current) clearTimeout(cloudFetchTimeoutRef.current);
+      cloudFetchTimeoutRef.current = setTimeout(async () => {
+        await fetchCloudGrid();
+        drawOverlay(); // Redraw with fresh cloud data
+      }, 1500);
     };
 
     map.on("moveend", handleDraw);
@@ -471,6 +530,7 @@ export function AuroraMap({
       map.off("moveend", handleDraw);
       map.off("zoomend", handleDraw);
       map.off("resize", handleDraw);
+      if (cloudFetchTimeoutRef.current) clearTimeout(cloudFetchTimeoutRef.current);
     };
   }, [leafletLoaded, drawOverlay, fetchCloudGrid]);
 
@@ -506,11 +566,13 @@ export function AuroraMap({
       const targetTime = new Date(Date.now() + timeOffset * 3600_000);
       const forecastKp = getKpAtTime(kpForecast, kp, targetTime);
       const kpScale = timeOffset > 0 ? getKpScale(kp, forecastKp) : 1;
-      const hourIdx = timeOffset;
+      const cloudHourIdx = cloudGridRef.current?.times
+        ? getCloudHourIdx(cloudGridRef.current.times, timeOffset)
+        : timeOffset;
 
       let prob = sampleAuroraAt(oval, lat, lon);
       prob = Math.min(100, prob * kpScale);
-      const cloud = sampleCloudAt(lat, lon, hourIdx);
+      const cloud = sampleCloudAt(lat, lon, cloudHourIdx);
       const dark = darknessFactor(lat, lon, targetTime);
       const lp = sampleLpSync(lat, lon);
       const clearSky = 1 - cloud / 100;
