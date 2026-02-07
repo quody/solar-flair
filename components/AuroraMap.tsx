@@ -140,7 +140,7 @@ export function AuroraMap({
     const map = L.map(mapContainerRef.current, {
       center: userLocation
         ? [userLocation.lat, userLocation.lon]
-        : [66.5039, 25.7294],
+        : [60.17, 24.94],
       zoom: 4,
       minZoom: 3,
       maxZoom: 12,
@@ -798,66 +798,110 @@ export function AuroraMap({
   const forecastKp = getKpAtTime(kpForecast, kp, targetTime);
 
   return (
-    <div className="relative rounded-lg border border-border overflow-hidden bg-card">
-      {/* Map Container */}
-      <div ref={mapContainerRef} className="w-full h-[500px] md:h-[600px]" />
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      {/* Map + overlays */}
+      <div className="relative">
+        <div ref={mapContainerRef} className="w-full h-[500px] md:h-[600px]" />
 
-      {/* View Mode Selector */}
-      <div className="absolute top-3 left-12 z-[500] flex gap-1 rounded-lg bg-card/90 backdrop-blur-sm border border-border p-1">
-        {viewModes.map((mode) => (
-          <button
-            key={mode.id}
-            onClick={() => setViewMode(mode.id)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-              viewMode === mode.id
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-            }`}
-          >
-            {mode.icon}
-            <span className="hidden sm:inline">{mode.label}</span>
-          </button>
-        ))}
+        {/* View Mode Selector */}
+        <div className="absolute top-3 left-12 z-[500] flex gap-1 rounded-lg bg-card/90 backdrop-blur-sm border border-border p-1">
+          {viewModes.map((mode) => (
+            <button
+              key={mode.id}
+              onClick={() => setViewMode(mode.id)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+                viewMode === mode.id
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+              }`}
+            >
+              {mode.icon}
+              <span className="hidden sm:inline">{mode.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Layer Toggles (aggregate mode) */}
+        {viewMode === "aggregate" && (
+          <div className="absolute top-3 right-3 z-[500] flex gap-2">
+            <button
+              onClick={() =>
+                setLayerToggles((p) => ({ ...p, clouds: !p.clouds }))
+              }
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all ${
+                layerToggles.clouds
+                  ? "bg-card/90 border-primary/30 text-primary backdrop-blur-sm"
+                  : "bg-card/60 border-border text-muted-foreground backdrop-blur-sm"
+              }`}
+            >
+              <Cloud className="h-3 w-3" />
+              <span className="hidden sm:inline">Clouds</span>
+            </button>
+            <button
+              onClick={() =>
+                setLayerToggles((p) => ({
+                  ...p,
+                  lightPollution: !p.lightPollution,
+                }))
+              }
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all ${
+                layerToggles.lightPollution
+                  ? "bg-card/90 border-primary/30 text-primary backdrop-blur-sm"
+                  : "bg-card/60 border-border text-muted-foreground backdrop-blur-sm"
+              }`}
+            >
+              <Lightbulb className="h-3 w-3" />
+              <span className="hidden sm:inline">Light Poll.</span>
+            </button>
+          </div>
+        )}
+
+        {/* Best Spot Info (stays on map) */}
+        {bestSpot && (
+          <div className="absolute bottom-3 right-3 z-[500] rounded-lg bg-card/90 backdrop-blur-sm border border-primary/20 p-3 max-w-[220px]">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <MapPin className="h-3.5 w-3.5 text-primary" />
+              <span className="text-xs font-medium text-foreground">
+                Best Spot
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Aurora: {bestSpot.aurora.toFixed(1)}%
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {bortleLabel(bestSpot.bortle)} (Bortle {bestSpot.bortle})
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              {bestSpot.lat.toFixed(2)}, {bestSpot.lon.toFixed(2)}
+            </p>
+            {bestSpot.distance < 0.5 ? (
+              <p className="text-[11px] text-primary mt-2">
+                You&apos;re already at the best spot!
+              </p>
+            ) : (
+              <button
+                onClick={() => {
+                  if (!userLocation) return;
+                  window.open(
+                    `https://www.google.com/maps/dir/${userLocation.lat},${userLocation.lon}/${bestSpot.lat},${bestSpot.lon}`,
+                    "_blank"
+                  );
+                }}
+                className="mt-2 w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
+              >
+                <Navigation className="h-3 w-3" />
+                Navigate ({bestSpot.distance < 1 ? `${Math.round(bestSpot.distance * 1000)} m` : `${Math.round(bestSpot.distance)} km`})
+                <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Layer Toggles (aggregate mode) */}
-      {viewMode === "aggregate" && (
-        <div className="absolute top-3 right-3 z-[500] flex gap-2">
-          <button
-            onClick={() =>
-              setLayerToggles((p) => ({ ...p, clouds: !p.clouds }))
-            }
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all ${
-              layerToggles.clouds
-                ? "bg-card/90 border-primary/30 text-primary backdrop-blur-sm"
-                : "bg-card/60 border-border text-muted-foreground backdrop-blur-sm"
-            }`}
-          >
-            <Cloud className="h-3 w-3" />
-            <span className="hidden sm:inline">Clouds</span>
-          </button>
-          <button
-            onClick={() =>
-              setLayerToggles((p) => ({
-                ...p,
-                lightPollution: !p.lightPollution,
-              }))
-            }
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all ${
-              layerToggles.lightPollution
-                ? "bg-card/90 border-primary/30 text-primary backdrop-blur-sm"
-                : "bg-card/60 border-border text-muted-foreground backdrop-blur-sm"
-            }`}
-          >
-            <Lightbulb className="h-3 w-3" />
-            <span className="hidden sm:inline">Light Poll.</span>
-          </button>
-        </div>
-      )}
-
-      {/* Time Selector */}
-      <div className="absolute bottom-32 left-3 right-3 z-[500]">
-        <div className="max-w-lg mx-auto rounded-lg bg-card/90 backdrop-blur-sm border border-border p-3">
+      {/* Controls below map */}
+      <div className="border-t border-border p-3 space-y-3">
+        {/* Time Selector */}
+        <div className="max-w-lg mx-auto">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5">
               <Clock className="h-3.5 w-3.5 text-muted-foreground" />
@@ -887,11 +931,9 @@ export function AuroraMap({
             }}
           />
         </div>
-      </div>
 
-      {/* Spot Finder */}
-      <div className="absolute bottom-3 left-3 z-[500] w-[260px]">
-        <div className="rounded-lg bg-card/90 backdrop-blur-sm border border-border p-3">
+        {/* Spot Finder */}
+        <div className="max-w-lg mx-auto">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5">
               <Navigation className="h-3.5 w-3.5 text-primary" />
@@ -945,47 +987,6 @@ export function AuroraMap({
           </div>
         </div>
       </div>
-
-      {/* Best Spot Info */}
-      {bestSpot && (
-        <div className="absolute bottom-3 right-3 z-[500] rounded-lg bg-card/90 backdrop-blur-sm border border-primary/20 p-3 max-w-[220px]">
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <MapPin className="h-3.5 w-3.5 text-primary" />
-            <span className="text-xs font-medium text-foreground">
-              Best Spot
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Aurora: {bestSpot.aurora.toFixed(1)}%
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {bortleLabel(bestSpot.bortle)} (Bortle {bestSpot.bortle})
-          </p>
-          <p className="text-[10px] text-muted-foreground mt-1">
-            {bestSpot.lat.toFixed(2)}, {bestSpot.lon.toFixed(2)}
-          </p>
-          {bestSpot.distance < 0.5 ? (
-            <p className="text-[11px] text-primary mt-2">
-              You&apos;re already at the best spot!
-            </p>
-          ) : (
-            <button
-              onClick={() => {
-                if (!userLocation) return;
-                window.open(
-                  `https://www.google.com/maps/dir/${userLocation.lat},${userLocation.lon}/${bestSpot.lat},${bestSpot.lon}`,
-                  "_blank"
-                );
-              }}
-              className="mt-2 w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
-            >
-              <Navigation className="h-3 w-3" />
-              Navigate ({bestSpot.distance < 1 ? `${Math.round(bestSpot.distance * 1000)} m` : `${Math.round(bestSpot.distance)} km`})
-              <ExternalLink className="h-2.5 w-2.5 opacity-60" />
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

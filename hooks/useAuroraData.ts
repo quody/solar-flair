@@ -59,11 +59,11 @@ export function useAuroraData(): AuroraData {
 
   // Get user location once — fallback to Rovaniemi, Finland if denied/unavailable
   useEffect(() => {
-    const ROVANIEMI = { lat: 66.5039, lon: 25.7294 };
+    const HELSINKI = { lat: 60.17, lon: 24.94 };
 
     if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setUserLocation(ROVANIEMI);
-      locationRef.current = ROVANIEMI;
+      setUserLocation(HELSINKI);
+      locationRef.current = HELSINKI;
       return;
     }
 
@@ -74,8 +74,8 @@ export function useAuroraData(): AuroraData {
         locationRef.current = loc;
       },
       () => {
-        setUserLocation(ROVANIEMI);
-        locationRef.current = ROVANIEMI;
+        setUserLocation(HELSINKI);
+        locationRef.current = HELSINKI;
       },
       { timeout: 10000 }
     );
