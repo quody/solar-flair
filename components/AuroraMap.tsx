@@ -842,8 +842,8 @@ export function AuroraMap({
       )}
 
       {/* Time Selector */}
-      <div className="absolute bottom-14 left-3 right-3 z-[500]">
-        <div className="rounded-lg bg-card/90 backdrop-blur-sm border border-border p-3">
+      <div className="absolute bottom-32 left-3 right-3 z-[500]">
+        <div className="max-w-lg mx-auto rounded-lg bg-card/90 backdrop-blur-sm border border-border p-3">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5">
               <Clock className="h-3.5 w-3.5 text-muted-foreground" />
@@ -876,29 +876,59 @@ export function AuroraMap({
       </div>
 
       {/* Spot Finder */}
-      <div className="absolute bottom-3 left-3 z-[500] flex items-center gap-2">
-        <div className="flex items-center gap-1 rounded-lg bg-card/90 backdrop-blur-sm border border-border p-1">
-          <div className="flex items-center gap-1 px-2 text-muted-foreground">
-            <Navigation className="h-3 w-3" />
-            <span className="text-xs hidden sm:inline">Spot Finder</span>
+      <div className="absolute bottom-3 left-3 z-[500] w-[260px]">
+        <div className="rounded-lg bg-card/90 backdrop-blur-sm border border-border p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
+              <Navigation className="h-3.5 w-3.5 text-primary" />
+              <span className="text-xs font-medium text-foreground">Spot Finder</span>
+            </div>
+            {spotDistance !== null && (
+              <span className="text-xs font-mono text-primary font-semibold">
+                {spotDistance} km
+              </span>
+            )}
           </div>
-          {distancePresets.map((preset) => (
-            <button
-              key={preset.value}
-              onClick={() =>
-                setSpotDistance(
-                  spotDistance === preset.value ? null : preset.value
-                )
-              }
-              className={`px-2 py-1 rounded-md text-xs font-medium transition-all ${
-                spotDistance === preset.value
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-              }`}
-            >
-              {preset.label}
-            </button>
-          ))}
+          <div className="flex gap-1 mb-2.5">
+            {distancePresets.map((preset) => (
+              <button
+                key={preset.value}
+                onClick={() =>
+                  setSpotDistance(
+                    spotDistance === preset.value ? null : preset.value
+                  )
+                }
+                className={`flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-all ${
+                  spotDistance === preset.value
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={300}
+            step={1}
+            value={spotDistance !== null ? Math.round(Math.log10(Math.max(1, spotDistance)) * 100) : 0}
+            onChange={(e) => {
+              const km = Math.round(10 ** (parseInt(e.target.value) / 100));
+              setSpotDistance(Math.max(1, Math.min(1000, km)));
+            }}
+            className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+            style={{
+              background: spotDistance !== null
+                ? `linear-gradient(to right, hsl(160,80%,50%) ${(Math.log10(Math.max(1, spotDistance)) / 3) * 100}%, hsl(220,15%,18%) ${(Math.log10(Math.max(1, spotDistance)) / 3) * 100}%)`
+                : "hsl(220,15%,18%)",
+            }}
+          />
+          <div className="flex justify-between mt-1">
+            <span className="text-[10px] text-muted-foreground">1 km</span>
+            <span className="text-[10px] text-muted-foreground">1000 km</span>
+          </div>
         </div>
       </div>
 
