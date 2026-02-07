@@ -27,6 +27,7 @@ import {
   Navigation,
   Clock,
   ExternalLink,
+  Crosshair,
 } from "lucide-react";
 
 // ---- Types ----
@@ -37,6 +38,7 @@ interface AuroraMapProps {
   kp: number;
   kpForecast: KpForecastEntry[];
   userLocation: { lat: number; lon: number } | null;
+  onLocationChange?: (lat: number, lon: number) => void;
 }
 
 interface SpotResult {
@@ -81,6 +83,7 @@ export function AuroraMap({
   kp,
   kpForecast,
   userLocation,
+  onLocationChange,
 }: AuroraMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -104,6 +107,47 @@ export function AuroraMap({
   const [spotDistance, setSpotDistance] = useState<number | null>(null);
   const [bestSpot, setBestSpot] = useState<SpotResult | null>(null);
   const [leafletLoaded, setLeafletLoaded] = useState(false);
+  const [locating, setLocating] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const userMarkerRef = useRef<any>(null);
+
+  const handleLocateMe = useCallback(() => {
+    if (!navigator?.geolocation) return;
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude: lat, longitude: lon } = pos.coords;
+        // Update marker on map
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const L = (window as any).L;
+        const map = mapRef.current;
+        if (map && L) {
+          if (userMarkerRef.current) {
+            userMarkerRef.current.setLatLng([lat, lon]);
+          } else {
+            const userIcon = L.divIcon({
+              className: "",
+              html: `<div style="width:12px;height:12px;background:hsl(160,80%,50%);border-radius:50%;border:2px solid hsl(220,18%,10%);box-shadow:0 0 10px hsl(160,80%,50%,0.5);"></div>`,
+              iconSize: [12, 12],
+              iconAnchor: [6, 6],
+            });
+            userMarkerRef.current = L.marker([lat, lon], { icon: userIcon })
+              .addTo(map)
+              .bindTooltip("Your location", {
+                permanent: false,
+                direction: "top",
+                offset: [0, -8],
+              });
+          }
+          map.flyTo([lat, lon], Math.max(map.getZoom(), 6), { duration: 1.5 });
+        }
+        onLocationChange?.(lat, lon);
+        setLocating(false);
+      },
+      () => setLocating(false),
+      { timeout: 10000 }
+    );
+  }, [onLocationChange]);
 
   // Load Leaflet dynamically (client-only)
   useEffect(() => {
@@ -193,7 +237,7 @@ export function AuroraMap({
         iconSize: [12, 12],
         iconAnchor: [6, 6],
       });
-      L.marker([userLocation.lat, userLocation.lon], { icon: userIcon })
+      userMarkerRef.current = L.marker([userLocation.lat, userLocation.lon], { icon: userIcon })
         .addTo(map)
         .bindTooltip("Your location", {
           permanent: false,
@@ -855,6 +899,16 @@ export function AuroraMap({
             </button>
           </div>
         )}
+
+        {/* Locate Me Button (desktop) */}
+        <button
+          onClick={handleLocateMe}
+          disabled={locating}
+          className="hidden md:flex absolute top-14 right-3 z-[500] items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium bg-card/90 backdrop-blur-sm border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all"
+        >
+          <Crosshair className={`h-3.5 w-3.5 ${locating ? "animate-pulse" : ""}`} />
+          <span>{locating ? "Locating..." : "My Location"}</span>
+        </button>
 
         {/* Best Spot Info (stays on map) */}
         {bestSpot && (

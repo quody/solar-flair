@@ -36,6 +36,7 @@ export interface AuroraData {
   demoMode: boolean;
   demoDateLabel: string;
   toggleDemo: () => void;
+  updateLocation: (lat: number, lon: number) => void;
 }
 
 export function useAuroraData(): AuroraData {
@@ -158,6 +159,12 @@ export function useAuroraData(): AuroraData {
     });
   }, [loadDemo, fetchAll]);
 
+  const updateLocation = useCallback((lat: number, lon: number) => {
+    const loc = { lat, lon };
+    setUserLocation(loc);
+    locationRef.current = loc;
+  }, []);
+
   // Initial fetch + polling (live mode only)
   useEffect(() => {
     if (demoMode) return;
@@ -196,5 +203,6 @@ export function useAuroraData(): AuroraData {
     demoMode,
     demoDateLabel: DEMO_DATE_LABEL,
     toggleDemo,
+    updateLocation,
   };
 }
