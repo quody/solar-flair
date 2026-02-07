@@ -18,7 +18,7 @@ import type {
 function generateDemoOval(): AuroraPoint[] {
   const points: AuroraPoint[] = [];
   // Generate a strong aurora band between lat 50-75, all longitudes
-  for (let lon = -180; lon <= 180; lon += 2) {
+  for (let lon = -180; lon <= 180; lon += 1) {
     for (let lat = 45; lat <= 80; lat += 1) {
       // Aurora probability peaks around 65-70 latitude
       const latCenter = 66;

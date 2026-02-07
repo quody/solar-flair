@@ -63,6 +63,7 @@ export function AuroraMap({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const spotLayerRef = useRef<any>(null);
   const drawTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null);
 
   const [viewMode, setViewMode] = useState<ViewMode>("aggregate");
   const [timeOffset, setTimeOffset] = useState(0); // hours from now
@@ -135,9 +136,7 @@ export function AuroraMap({
     canvas.style.pointerEvents = "none";
     canvas.style.mixBlendMode = "screen";
     canvas.style.zIndex = "400";
-    map.getContainer()
-      .querySelector(".leaflet-map-pane")
-      ?.appendChild(canvas);
+    map.getContainer().appendChild(canvas);
     canvasRef.current = canvas;
 
     // Create tooltip div
@@ -252,8 +251,12 @@ export function AuroraMap({
     canvas.style.width = `${size.x}px`;
     canvas.style.height = `${size.y}px`;
 
-    // Offscreen canvas at 25% resolution
-    const offscreen = document.createElement("canvas");
+    // Offscreen canvas at 25% resolution (reused across frames)
+    let offscreen = offscreenRef.current;
+    if (!offscreen) {
+      offscreen = document.createElement("canvas");
+      offscreenRef.current = offscreen;
+    }
     offscreen.width = w;
     offscreen.height = h;
     const offCtx = offscreen.getContext("2d");

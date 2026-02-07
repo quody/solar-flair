@@ -160,20 +160,38 @@ export async function fetchSunTimes(
 
 /* ---------- Aurora Grid Helpers ---------- */
 
+// Spatial index for O(1) aurora point lookups (keyed by "lat,lon" on integer grid)
+let _ovalIndex: Map<string, number> | null = null;
+let _ovalIndexSource: AuroraPoint[] | null = null;
+
+function getOvalIndex(oval: AuroraPoint[]): Map<string, number> {
+  if (_ovalIndexSource === oval && _ovalIndex) return _ovalIndex;
+  const idx = new Map<string, number>();
+  for (const p of oval) {
+    const key = `${Math.round(p.lat)},${Math.round(p.lon)}`;
+    const existing = idx.get(key);
+    if (existing === undefined || p.probability > existing) {
+      idx.set(key, p.probability);
+    }
+  }
+  _ovalIndex = idx;
+  _ovalIndexSource = oval;
+  return idx;
+}
+
 export function sampleAuroraAt(
   oval: AuroraPoint[],
   lat: number,
   lon: number
 ): number {
+  const idx = getOvalIndex(oval);
   // Bilinear interpolation from 1° grid
   const gridLat = Math.floor(lat);
   const gridLon = Math.floor(lon);
   const fracLat = lat - gridLat;
   const fracLon = lon - gridLon;
 
-  const get = (la: number, lo: number) =>
-    oval.find((p) => Math.abs(p.lat - la) < 0.5 && Math.abs(p.lon - lo) < 0.5)
-      ?.probability ?? 0;
+  const get = (la: number, lo: number) => idx.get(`${la},${lo}`) ?? 0;
 
   const v00 = get(gridLat, gridLon);
   const v10 = get(gridLat + 1, gridLon);
