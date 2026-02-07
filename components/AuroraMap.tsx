@@ -26,6 +26,7 @@ import {
   MapPin,
   Navigation,
   Clock,
+  ExternalLink,
 } from "lucide-react";
 
 // ---- Types ----
@@ -44,6 +45,18 @@ interface SpotResult {
   aurora: number;
   bortle: number;
   score: number;
+  distance: number; // km from user
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLon = (lon2 - lon1) * rad;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 // ---- Cloud hour index: find the closest matching hour in the times array ----
@@ -688,6 +701,7 @@ export function AuroraMap({
             aurora,
             bortle: lpData.bortle,
             score,
+            distance: haversineKm(userLocation.lat, userLocation.lon, c.lat, c.lon),
           };
         }
       }
@@ -934,7 +948,7 @@ export function AuroraMap({
 
       {/* Best Spot Info */}
       {bestSpot && (
-        <div className="absolute bottom-3 right-3 z-[500] rounded-lg bg-card/90 backdrop-blur-sm border border-primary/20 p-3 max-w-[200px]">
+        <div className="absolute bottom-3 right-3 z-[500] rounded-lg bg-card/90 backdrop-blur-sm border border-primary/20 p-3 max-w-[220px]">
           <div className="flex items-center gap-1.5 mb-1.5">
             <MapPin className="h-3.5 w-3.5 text-primary" />
             <span className="text-xs font-medium text-foreground">
@@ -950,6 +964,26 @@ export function AuroraMap({
           <p className="text-[10px] text-muted-foreground mt-1">
             {bestSpot.lat.toFixed(2)}, {bestSpot.lon.toFixed(2)}
           </p>
+          {bestSpot.distance < 0.5 ? (
+            <p className="text-[11px] text-primary mt-2">
+              You&apos;re already at the best spot!
+            </p>
+          ) : (
+            <button
+              onClick={() => {
+                if (!userLocation) return;
+                window.open(
+                  `https://www.google.com/maps/dir/${userLocation.lat},${userLocation.lon}/${bestSpot.lat},${bestSpot.lon}`,
+                  "_blank"
+                );
+              }}
+              className="mt-2 w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
+            >
+              <Navigation className="h-3 w-3" />
+              Navigate ({bestSpot.distance < 1 ? `${Math.round(bestSpot.distance * 1000)} m` : `${Math.round(bestSpot.distance)} km`})
+              <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+            </button>
+          )}
         </div>
       )}
     </div>
